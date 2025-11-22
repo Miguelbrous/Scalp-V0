@@ -1,0 +1,23 @@
+{
+  "mode": "NORMAL",
+  "session_stats": {
+    "trading_day": "2025-11-15",
+    "daily_pnl": -26.36610000000067,
+    "daily_trades": 4,
+    "consecutive_losses": 3
+  },
+  "equity_stats": {
+    "cumulative_pnl": -26.36610000000067,
+    "peak_equity": 1001.9583999999994,
+    "max_drawdown_pct": 0.028269137720687877
+  },
+  "cooldown_until": null,
+  "next_mode_after_cooldown": "LIMITED",
+  "limited_until": null,
+  "limited_exit_equity": null,
+  "internal_version": "0.0.16",
+  "cooldown_counters": {
+    "short": 0,
+    "long": 0
+  }
+}

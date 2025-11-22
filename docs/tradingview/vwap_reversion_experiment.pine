@@ -1,0 +1,81 @@
+//@version=6
+strategy("VWAP Reversion Experiment", overlay=true, initial_capital=1000, default_qty_type=strategy.percent_of_equity, default_qty_value=2, commission_value=0.055, commission_type=strategy.commission.percent)
+
+// Inputs
+useGlobalTrend = input.bool(true, "Filtro tendencia global (EMA20 vs EMA50)", inline="trend")
+emaFastLen = input.int(20, "EMA rápida", minval=1, inline="trend")
+emaSlowLen = input.int(50, "EMA lenta", minval=1, inline="trend")
+
+atrPeriod = input.int(14, "ATR periodos", minval=1)
+bandMultiplier = input.float(0.8, "Multiplicador ATR bandas", minval=0.1, step=0.1)
+
+rsiPeriod = input.int(14, "RSI periodo", minval=5)
+rsiLongMax = input.float(55.0, "RSI máximo largos", minval=10, maxval=90)
+rsiLongMin = input.float(25.0, "RSI mínimo largos", minval=5, maxval=90)
+rsiShortMin = input.float(45.0, "RSI mínimo cortos", minval=5, maxval=90)
+rsiShortMax = input.float(70.0, "RSI máximo cortos", minval=10, maxval=90)
+
+adxPeriod = input.int(14, "ADX periodos (tendencia)", minval=5)
+adxThreshold = input.float(20.0, "ADX máximo para operar", minval=5)
+
+timeStopBars = input.int(15, "Time-stop en barras", minval=1)
+useTimeStop = input.bool(true, "Activar time-stop")
+
+// Calculations (5m base timeframe)
+atrVal = ta.atr(atrPeriod)
+vwapVal = ta.vwap(hlc3)
+atrBand = atrVal * bandMultiplier
+upperBand = vwapVal + atrBand
+lowerBand = vwapVal - atrBand
+
+emaFast = ta.ema(close, emaFastLen)
+emaSlow = ta.ema(close, emaSlowLen)
+rsiVal = ta.rsi(close, rsiPeriod)
+
+calcAdx(len) =>
+    upMove = ta.change(high)
+    downMove = -ta.change(low)
+    plusDM = upMove > downMove and upMove > 0 ? upMove : 0.0
+    minusDM = downMove > upMove and downMove > 0 ? downMove : 0.0
+    tr = ta.tr(true)
+    plusDI = 100 * ta.rma(plusDM, len) / ta.rma(tr, len)
+    minusDI = 100 * ta.rma(minusDM, len) / ta.rma(tr, len)
+    dx = 100 * math.abs(plusDI - minusDI) / math.max(plusDI + minusDI, 1e-10)
+    ta.rma(dx, len)
+
+adxVal = calcAdx(adxPeriod)
+
+globalTrendFlat = math.abs(emaFast - emaSlow) / close < 0.002
+globalTrendOk = not useGlobalTrend or globalTrendFlat or adxVal < adxThreshold
+
+var int entryIndex = na
+if strategy.position_size == 0
+    entryIndex := na
+
+longCondition = globalTrendOk and close < lowerBand and close > low and close < open and rsiVal >= rsiLongMin and rsiVal <= rsiLongMax
+shortCondition = globalTrendOk and close > upperBand and close < high and close > open and rsiVal <= rsiShortMax and rsiVal >= rsiShortMin
+
+if longCondition and strategy.position_size <= 0
+    stopPrice = low
+    limitPrice = vwapVal
+    strategy.entry("VWAP_LONG", strategy.long, comment="VWAP_LONG")
+    strategy.exit("VWAP_LONG_EXIT", from_entry="VWAP_LONG", stop=stopPrice, limit=limitPrice)
+    entryIndex := bar_index
+
+if shortCondition and strategy.position_size >= 0
+    stopPrice = high
+    limitPrice = vwapVal
+    strategy.entry("VWAP_SHORT", strategy.short, comment="VWAP_SHORT")
+    strategy.exit("VWAP_SHORT_EXIT", from_entry="VWAP_SHORT", stop=stopPrice, limit=limitPrice)
+    entryIndex := bar_index
+
+if useTimeStop and strategy.position_size != 0 and not na(entryIndex) and (bar_index - entryIndex) >= timeStopBars
+    strategy.close(strategy.position_size > 0 ? "VWAP_LONG" : "VWAP_SHORT", comment="TIME_STOP")
+    entryIndex := na
+
+plot(vwapVal, color=color.new(color.blue, 0), title="VWAP", linewidth=2)
+plot(upperBand, color=color.new(color.orange, 0), title="VWAP + ATR", linewidth=1)
+plot(lowerBand, color=color.new(color.orange, 0), title="VWAP - ATR", linewidth=1)
+
+plotshape(longCondition, title="Long Setup", location=location.belowbar, color=color.new(color.green, 0), style=shape.triangleup, size=size.tiny, text="L")
+plotshape(shortCondition, title="Short Setup", location=location.abovebar, color=color.new(color.red, 0), style=shape.triangledown, size=size.tiny, text="S")

@@ -1,0 +1,122 @@
+//@version=6
+strategy(
+     "Range Breakout Experiment - SOL/BTC 5m",
+     overlay=true,
+     initial_capital=1000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=1,
+     commission_value=0.055,
+     commission_type=strategy.commission.percent,
+     calc_on_every_tick=true)
+
+rangeLength      = input.int(36, "Velas para rango", minval=5)
+atrPeriod        = input.int(14, "ATR periodos", minval=1)
+minAtr           = input.float(5.0, "ATR minimo", minval=0.0001, step=0.1)
+atrMultBreakout  = input.float(0.2, "ATR x buffer breakout", minval=0.01, step=0.01)
+atrMultSL        = input.float(0.8, "ATR x stop", minval=0.1, step=0.1)
+atrMultTP        = input.float(1.2, "ATR x take profit", minval=0.1, step=0.1)
+
+useRsiFilter     = input.bool(true, "Usar filtro RSI")
+rsiPeriod        = input.int(14, "RSI periodos", minval=5)
+rsiLongMax       = input.float(70.0, "RSI maximo largos", minval=10, maxval=90)
+rsiShortMin      = input.float(30.0, "RSI minimo cortos", minval=0, maxval=90)
+
+useSessionFilter = input.bool(false, "Usar filtro sesion")
+sessionInput     = input.session("0900-1700", "Sesion (hhmm-hhmm)")
+
+timeStopBars     = input.int(0, "Time-stop (barras, 0 = sin)", minval=0)
+
+atrVal    = ta.atr(atrPeriod)
+rsiVal    = ta.rsi(close, rsiPeriod)
+rangeHigh = ta.highest(high, rangeLength)[1]
+rangeLow  = ta.lowest(low, rangeLength)[1]
+
+longTrigger  = rangeHigh + atrMultBreakout * atrVal
+shortTrigger = rangeLow  - atrMultBreakout * atrVal
+longCross    = ta.crossover(close, longTrigger)
+shortCross   = ta.crossunder(close, shortTrigger)
+
+sessionOK = not useSessionFilter or not na(time(timeframe.period, sessionInput))
+rsiLongOK  = not useRsiFilter or rsiVal <= rsiLongMax
+rsiShortOK = not useRsiFilter or rsiVal >= rsiShortMin
+atrOK      = atrVal >= minAtr
+
+validLongBreak  = atrOK and sessionOK and rsiLongOK and not na(rangeHigh) and longCross
+validShortBreak = atrOK and sessionOK and rsiShortOK and not na(rangeLow)  and shortCross
+
+var int entryBarIndex = na
+
+if validLongBreak and strategy.position_size <= 0
+    stopPrice  = close - atrMultSL * atrVal
+    limitPrice = close + atrMultTP * atrVal
+    strategy.entry("LONG", strategy.long, comment="LONG_BREAK")
+    strategy.exit("LONG_EXIT", from_entry="LONG", stop=stopPrice, limit=limitPrice)
+    entryBarIndex := bar_index
+
+if validShortBreak and strategy.position_size >= 0
+    stopPrice  = close + atrMultSL * atrVal
+    limitPrice = close - atrMultTP * atrVal
+    strategy.entry("SHORT", strategy.short, comment="SHORT_BREAK")
+    strategy.exit("SHORT_EXIT", from_entry="SHORT", stop=stopPrice, limit=limitPrice)
+    entryBarIndex := bar_index
+
+if timeStopBars > 0 and strategy.position_size != 0 and not na(entryBarIndex)
+    if bar_index - entryBarIndex >= timeStopBars
+        strategy.close(strategy.position_size > 0 ? "LONG" : "SHORT", comment="TIME_STOP")
+        entryBarIndex := na
+
+if strategy.position_size == 0
+    entryBarIndex := na
+
+plot(rangeHigh, color=color.new(color.yellow, 50), title="Range High")
+plot(rangeLow, color=color.new(color.yellow, 50), title="Range Low")
+plot(longTrigger, color=color.new(color.green, 40), title="Trigger Long", style=plot.style_linebr)
+plot(shortTrigger, color=color.new(color.red, 40), title="Trigger Short", style=plot.style_linebr)
+
+plotshape(validLongBreak, title="Senal Long", style=shape.triangleup, color=color.new(color.green, 0), size=size.tiny, location=location.belowbar)
+plotshape(validShortBreak, title="Senal Short", style=shape.triangledown, color=color.new(color.red, 0), size=size.tiny, location=location.abovebar)
+
+var float grossProfit = 0.0
+var float grossLoss   = 0.0
+var int   wins        = 0
+var int   losses      = 0
+var int   totalTrades = 0
+
+if strategy.closedtrades > totalTrades
+    tradeProfit = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    totalTrades += 1
+    if tradeProfit > 0
+        grossProfit += tradeProfit
+        wins += 1
+    else
+        grossLoss += tradeProfit
+        losses += 1
+
+winrate      = totalTrades > 0 ? float(wins) / float(totalTrades) * 100.0 : na
+profitFactor = grossLoss < 0 ? grossProfit / math.abs(grossLoss) : na
+netProfit    = grossProfit + grossLoss
+initialCapital = strategy.initial_capital
+netProfitPct = initialCapital != 0 ? netProfit / initialCapital * 100.0 : na
+
+var table statsTable = table.new(
+     position.bottom_left,
+     2,
+     7,
+     frame_color=color.new(color.white, 60),
+     border_width=1,
+     bgcolor=color.new(color.black, 75))
+if barstate.islast
+    table.cell(statsTable, 0, 0, "Total trades", text_color=color.white)
+    table.cell(statsTable, 1, 0, str.tostring(totalTrades))
+    table.cell(statsTable, 0, 1, "Wins", text_color=color.white)
+    table.cell(statsTable, 1, 1, str.tostring(wins))
+    table.cell(statsTable, 0, 2, "Losses", text_color=color.white)
+    table.cell(statsTable, 1, 2, str.tostring(losses))
+    table.cell(statsTable, 0, 3, "Winrate %", text_color=color.white)
+    table.cell(statsTable, 1, 3, str.tostring(winrate, "#.0"))
+    table.cell(statsTable, 0, 4, "Profit factor", text_color=color.white)
+    table.cell(statsTable, 1, 4, str.tostring(profitFactor, "#.2"))
+    table.cell(statsTable, 0, 5, "Net profit %", text_color=color.white)
+    table.cell(statsTable, 1, 5, str.tostring(netProfitPct, "#.2"))
+    table.cell(statsTable, 0, 6, "Gross P / L", text_color=color.white)
+    table.cell(statsTable, 1, 6, str.tostring(grossProfit, "#.2") + " / " + str.tostring(grossLoss, "#.2"))

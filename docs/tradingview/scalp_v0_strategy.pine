@@ -1,0 +1,123 @@
+﻿//@version=6
+strategy("Scalp V0 - SOLUSDT", overlay=true, initial_capital=1000, default_qty_type=strategy.percent_of_equity, default_qty_value=1, commission_value=0.055, commission_type=strategy.commission.percent)
+
+// -----------------------------------------------------------------------------
+// Replica simplificada de strategy/scalp_v0.py para pruebas en TradingView.
+// Ajusta estos parámetros antes de tocar config.json en el bot real.
+// -----------------------------------------------------------------------------
+emaFastInput = input.int(20, "EMA rápida (1m)", minval=1)
+emaSlowUser = input.int(50, "EMA lenta (1m)", minval=1)
+emaSlowInput = math.max(emaSlowUser, emaFastInput + 1)
+atrPeriod = input.int(14, "ATR periodos", minval=1)
+atrMultSL = input.float(1.2, "ATR x SL", minval=0.1, step=0.1)
+atrMultTP = input.float(2.4, "ATR x TP", minval=0.1, step=0.1)
+minAtr = input.float(0.18, "ATR mínimo", minval=0.0, step=0.01)
+maxVwapDistance = input.float(0.35, "Distancia máxima a VWAP (%)", minval=0.0, step=0.05)
+maxEmaDistance = input.float(0.4, "Distancia máxima a EMA rápida (%)", minval=0.0, step=0.05)
+pullbackTolerance = input.float(0.12, "Tolerancia pullback (%)", minval=0.01, step=0.01)
+minVolatility = input.float(0.0006, "Volatilidad mínima", minval=0.0, step=0.0001)
+timeStopBars = input.int(15, "Time-stop en barras (1m)", minval=1)
+showLabels = input.bool(true, "Mostrar etiquetas de trades")
+restrictSessions = input.bool(true, "Restringir a sesiones preferidas")
+allowOffSession = input.bool(true, "Permitir fuera de sesión si condiciones high-quality")
+session1 = input.session("0000-0300", "Sesión 1 (UTC)")
+session2 = input.session("0700-1100", "Sesión 2 (UTC)")
+session3 = input.session("1300-1700", "Sesión 3 (UTC)")
+useRsiFilter = input.bool(true, "Usar filtro RSI")
+rsiPeriod = input.int(14, "Periodo RSI", minval=5)
+rsiLongMax = input.float(60.0, "RSI máximo para largos", minval=10, maxval=90, step=1)
+rsiShortMin = input.float(40.0, "RSI mínimo para cortos", minval=10, maxval=90, step=1)
+
+emaFast = ta.ema(close, emaFastInput)
+emaSlow = ta.ema(close, emaSlowInput)
+vwapVal = ta.vwap(close)
+atrVal = ta.atr(atrPeriod)
+
+fast5 = request.security(syminfo.tickerid, "5", ta.ema(close, emaFastInput))
+slow5 = request.security(syminfo.tickerid, "5", ta.ema(close, emaSlowInput))
+fast15 = request.security(syminfo.tickerid, "15", ta.ema(close, emaFastInput))
+slow15 = request.security(syminfo.tickerid, "15", ta.ema(close, emaSlowInput))
+fast5Slope = fast5 - fast5[5]
+fast15Slope = fast15 - fast15[5]
+
+bullTrend = fast5 > slow5 and fast15 > slow15 and fast5Slope > 0 and fast15Slope > 0 and close >= emaFast and emaFast >= emaSlow
+bearTrend = fast5 < slow5 and fast15 < slow15 and fast5Slope < 0 and fast15Slope < 0 and close <= emaFast and emaFast <= emaSlow
+
+atrOk = atrVal >= minAtr
+vwapDistancePct = math.abs((close - vwapVal) / vwapVal) * 100
+vwapOk = vwapDistancePct <= maxVwapDistance
+emaDistancePct = math.abs(close - emaFast) / close * 100
+emaOk = emaDistancePct <= maxEmaDistance
+volatilityVal = ta.stdev(ta.change(close), 30)
+volatilityOk = volatilityVal >= minVolatility
+
+rsiVal = ta.rsi(close, rsiPeriod)
+allowedByRsi(longTrade) =>
+    not useRsiFilter or (longTrade ? rsiVal <= rsiLongMax : rsiVal >= rsiShortMin)
+
+pullbackLong() =>
+    tolerance = pullbackTolerance / 100.0
+    cond1 = low[1] <= emaFast[1] and close[1] < open[1]
+    cond2 = close > open and close > high[1] and close > emaFast
+    cond3 = math.abs(close - emaFast) <= close * tolerance
+    cond1 and cond2 and cond3
+
+pullbackShort() =>
+    tolerance = pullbackTolerance / 100.0
+    cond1 = high[1] >= emaFast[1] and close[1] > open[1]
+    cond2 = close < open and close < low[1] and close < emaFast
+    cond3 = math.abs(close - emaFast) <= close * tolerance
+    cond1 and cond2 and cond3
+
+highQualityOffSession = atrVal >= minAtr * 1.5 and vwapDistancePct <= maxVwapDistance / 2 and (useRsiFilter ? (rsiVal <= rsiShortMin or rsiVal >= rsiLongMax) : true)
+
+isInSession(sessionStr) =>
+    sessionStr == "" ? false : not na(time(timeframe.period, sessionStr))
+
+sessionActive = isInSession(session1) or isInSession(session2) or isInSession(session3)
+sessionOk = not restrictSessions or sessionActive or (allowOffSession and highQualityOffSession)
+
+var int entryBarIndex = na
+if strategy.position_size == 0
+    entryBarIndex := na
+
+allowLong = allowedByRsi(true)
+allowShort = allowedByRsi(false)
+pullbackLongResult = pullbackLong()
+pullbackShortResult = pullbackShort()
+
+if atrOk and vwapOk and emaOk and sessionOk and volatilityOk
+    if bullTrend and strategy.position_size <= 0
+        if not allowLong or not pullbackLongResult
+            strategy.cancel_all()
+        else
+            stopPrice = close - atrVal * atrMultSL
+            limitPrice = close + atrVal * atrMultTP
+            strategy.entry("Long", strategy.long, comment="LONG")
+            strategy.exit("Long SL/TP", "Long", stop=stopPrice, limit=limitPrice)
+            entryBarIndex := bar_index
+    else if bearTrend and strategy.position_size >= 0
+        if not allowShort or not pullbackShortResult
+            strategy.cancel_all()
+        else
+            stopPrice = close + atrVal * atrMultSL
+            limitPrice = close - atrVal * atrMultTP
+            strategy.entry("Short", strategy.short, comment="SHORT")
+            strategy.exit("Short SL/TP", "Short", stop=stopPrice, limit=limitPrice)
+            entryBarIndex := bar_index
+
+if strategy.position_size != 0 and not na(entryBarIndex)
+    if bar_index - entryBarIndex >= timeStopBars
+        if strategy.position_size > 0
+            strategy.close("Long", comment="TIME_STOP")
+        else if strategy.position_size < 0
+            strategy.close("Short", comment="TIME_STOP")
+        entryBarIndex := na
+
+plot(emaFast, color=color.new(color.yellow, 0), title="EMA rápida", linewidth=2)
+plot(emaSlow, color=color.new(color.orange, 0), title="EMA lenta", linewidth=2)
+plot(vwapVal, color=color.new(color.blue, 0), title="VWAP", linewidth=2)
+
+plotshape(showLabels and strategy.opentrades > 0 and strategy.position_size > 0 and strategy.position_size[1] <= 0, title="Long Label", location=location.belowbar, color=color.new(color.green, 0), style=shape.triangleup, size=size.small, text="L")
+plotshape(showLabels and strategy.opentrades > 0 and strategy.position_size < 0 and strategy.position_size[1] >= 0, title="Short Label", location=location.abovebar, color=color.new(color.red, 0), style=shape.triangledown, size=size.small, text="S")
+plotshape(showLabels and strategy.closedtrades > strategy.closedtrades[1], title="Exit Label", location=location.absolute, color=color.new(color.purple, 0), style=shape.circle, size=size.tiny, text="×")

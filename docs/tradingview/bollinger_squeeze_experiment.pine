@@ -1,0 +1,140 @@
+//@version=6
+strategy("Bollinger Squeeze Experiment – 15m",
+     overlay=true,
+     initial_capital=1000,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=1,
+     commission_type=strategy.commission.percent,
+     commission_value=0.055,
+     calc_on_every_tick=true)
+
+// === Inputs ===
+lenBB       = input.int(20, "Bollinger period", minval=5)
+multBB      = input.float(2.0, "Bollinger deviation", minval=0.1, step=0.1)
+lenKC       = input.int(20, "Keltner period", minval=5)
+multKC      = input.float(1.5, "Keltner multiplier", minval=0.1, step=0.1)
+atrPeriod   = input.int(14, "ATR period", minval=1)
+minAtr      = input.float(0.0, "Min ATR", minval=0.0, step=0.1)
+
+useRsiFilter = input.bool(true, "Use RSI filter")
+rsiPeriod    = input.int(14, "RSI period", minval=5)
+rsiLongMax   = input.float(70.0, "Max RSI longs", minval=10, maxval=90)
+rsiShortMin  = input.float(30.0, "Min RSI shorts", minval=0, maxval=90)
+
+useSessionFilter = input.bool(true, "Use session filter")
+sessionInput     = input.session("0900-1700", "Session (hhmm-hhmm)")
+
+atrMultSL    = input.float(1.5, "ATR x Stop", minval=0.1, step=0.1)
+atrMultTP    = input.float(2.5, "ATR x Take Profit", minval=0.1, step=0.1)
+timeStopBars = input.int(0, "Time-stop bars (0 = off)", minval=0)
+
+// === Core calculations ===
+atrVal = ta.atr(atrPeriod)
+rsiVal = ta.rsi(close, rsiPeriod)
+
+basis = ta.sma(close, lenBB)
+dev   = multBB * ta.stdev(close, lenBB)
+bbUpper = basis + dev
+bbLower = basis - dev
+
+emaKC   = ta.ema(close, lenKC)
+kcRange = ta.atr(lenKC) * multKC
+kcUpper = emaKC + kcRange
+kcLower = emaKC - kcRange
+
+inSqueeze    = bbUpper < kcUpper and bbLower > kcLower
+outOfSqueeze = bbUpper > kcUpper or bbLower < kcLower
+
+// Track when we just left a squeeze and can fire on breakout
+var bool squeezeReady = false
+if inSqueeze
+    squeezeReady := true
+
+sessionOK = not useSessionFilter or not na(time(timeframe.period, sessionInput))
+rsiLongOK  = not useRsiFilter or rsiVal <= rsiLongMax
+rsiShortOK = not useRsiFilter or rsiVal >= rsiShortMin
+atrOK      = atrVal >= minAtr
+
+longSetup  = atrOK and sessionOK and rsiLongOK and squeezeReady and outOfSqueeze and close > bbUpper
+shortSetup = atrOK and sessionOK and rsiShortOK and squeezeReady and outOfSqueeze and close < bbLower
+
+var int entryBarIndex = na
+
+if longSetup and strategy.position_size <= 0
+    stopPrice  = close - atrMultSL * atrVal
+    limitPrice = close + atrMultTP * atrVal
+    strategy.entry("LONG", strategy.long, comment="BB_LONG")
+    strategy.exit("LONG_EXIT", from_entry="LONG", stop=stopPrice, limit=limitPrice)
+    entryBarIndex := bar_index
+    squeezeReady := false
+
+if shortSetup and strategy.position_size >= 0
+    stopPrice  = close + atrMultSL * atrVal
+    limitPrice = close - atrMultTP * atrVal
+    strategy.entry("SHORT", strategy.short, comment="BB_SHORT")
+    strategy.exit("SHORT_EXIT", from_entry="SHORT", stop=stopPrice, limit=limitPrice)
+    entryBarIndex := bar_index
+    squeezeReady := false
+
+if timeStopBars > 0 and strategy.position_size != 0 and not na(entryBarIndex)
+    if bar_index - entryBarIndex >= timeStopBars
+        strategy.close(strategy.position_size > 0 ? "LONG" : "SHORT", comment="TIME_STOP")
+        entryBarIndex := na
+
+if strategy.position_size == 0
+    entryBarIndex := na
+
+plot(basis, "BB Basis", color=color.new(color.blue, 30))
+plot(bbUpper, "BB Upper", color=color.new(color.green, 40))
+plot(bbLower, "BB Lower", color=color.new(color.green, 40))
+plot(kcUpper, "KC Upper", color=color.new(color.orange, 60))
+plot(kcLower, "KC Lower", color=color.new(color.orange, 60))
+
+plotshape(longSetup, title="Long signal", style=shape.triangleup, color=color.new(color.green, 0), location=location.belowbar, size=size.tiny)
+plotshape(shortSetup, title="Short signal", style=shape.triangledown, color=color.new(color.red, 0), location=location.abovebar, size=size.tiny)
+
+// === Stats panel ===
+var float grossProfit = 0.0
+var float grossLoss   = 0.0
+var int   wins        = 0
+var int   losses      = 0
+var int   totalTrades = 0
+
+if strategy.closedtrades > totalTrades
+    tradeProfit = strategy.closedtrades.profit(strategy.closedtrades - 1)
+    totalTrades += 1
+    if tradeProfit > 0
+        grossProfit += tradeProfit
+        wins += 1
+    else
+        grossLoss += tradeProfit
+        losses += 1
+
+winrate      = totalTrades > 0 ? float(wins) / float(totalTrades) * 100 : na
+profitFactor = grossLoss < 0 ? grossProfit / math.abs(grossLoss) : na
+netProfit    = grossProfit + grossLoss
+netProfitPct = strategy.initial_capital != 0 ? netProfit / strategy.initial_capital * 100 : na
+
+var table statsTable = table.new(
+     position.bottom_left,
+     2,
+     7,
+     frame_color=color.new(color.white, 60),
+     border_width=1,
+     bgcolor=color.new(color.black, 75))
+
+if barstate.islastconfirmedhistory or barstate.islast
+    table.cell(statsTable, 0, 0, "Total trades", text_color=color.white)
+    table.cell(statsTable, 1, 0, str.tostring(totalTrades))
+    table.cell(statsTable, 0, 1, "Wins", text_color=color.white)
+    table.cell(statsTable, 1, 1, str.tostring(wins))
+    table.cell(statsTable, 0, 2, "Losses", text_color=color.white)
+    table.cell(statsTable, 1, 2, str.tostring(losses))
+    table.cell(statsTable, 0, 3, "Winrate %", text_color=color.white)
+    table.cell(statsTable, 1, 3, str.tostring(winrate, "#.0"))
+    table.cell(statsTable, 0, 4, "Profit factor", text_color=color.white)
+    table.cell(statsTable, 1, 4, str.tostring(profitFactor, "#.2"))
+    table.cell(statsTable, 0, 5, "Net profit %", text_color=color.white)
+    table.cell(statsTable, 1, 5, str.tostring(netProfitPct, "#.2"))
+    table.cell(statsTable, 0, 6, "Gross P / L", text_color=color.white)
+    table.cell(statsTable, 1, 6, str.tostring(grossProfit, "#.2") + " / " + str.tostring(grossLoss, "#.2"))

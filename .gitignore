@@ -1,0 +1,21 @@
+# Environments
+.vscode/
+.trading_bot/.venv/
+trading_bot/.venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Secrets / configs
+.env
+trading_bot/.env
+
+# Logs and runtime data
+logs/runtime/
+logs/trades/
+trading_bot/logs/
+
+# Misc
+*.log

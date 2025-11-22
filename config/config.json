@@ -1,0 +1,64 @@
+{
+  "environment": {
+    "name": "ENV_DEMO_MAINNET",
+    "rest_url": "https://api-demo.bybit.com",
+    "websocket_url": "wss://stream-demo.bybit.com/v5/public/linear"
+  },
+  "profile": {
+    "name": "PROFILE_EXPLORER",
+    "risk_per_trade_pct": 0.005,
+    "max_daily_loss_pct": 0.02,
+    "max_daily_trades": 15,
+    "max_consecutive_losses_for_cooldown": 3,
+    "min_account_balance_usdt": 1000
+  },
+  "symbol": {
+    "name": "SOLUSDT",
+    "leverage": 3,
+    "contract_type": "linear_perpetual"
+  },
+  "risk_limits": {
+    "global_drawdown_pct": 0.1,
+    "limited_mode_recovery_pct": 0.02,
+    "limited_mode_duration_minutes": 120,
+    "cooldown_short_minutes": 15,
+    "cooldown_long_minutes": 60,
+    "reference_account_size_usdt": 1000
+  },
+  "strategy_params": {
+    "ema_fast": 20,
+    "ema_slow": 50,
+    "vwap_window": 30,
+    "atr_period": 14,
+    "atr_multiplier_sl": 1.2,
+    "atr_multiplier_tp": 2.4,
+    "min_atr": 0.18,
+    "time_stop_minutes": 15,
+    "max_vwap_distance_pct": 0.35,
+    "max_price_ema_distance_pct": 0.4,
+    "pullback_tolerance_pct": 0.12,
+    "min_volatility": 0.0006,
+    "rsi_period": 14,
+    "rsi_long_max": 70,
+    "rsi_long_min": 40,
+    "rsi_short_max": 60,
+    "rsi_short_min": 30
+  },
+  "sessions": {
+    "preferred": [
+      {"start": "00:00", "end": "03:00"},
+      {"start": "07:00", "end": "11:00"},
+      {"start": "13:00", "end": "17:00"}
+    ],
+    "allow_offsession_trades_if_high_quality": true
+  },
+  "logging": {
+    "level": "INFO",
+    "runtime_dir": "logs/runtime"
+  },
+  "promotion_rules": {
+    "min_demo_trades": 80,
+    "min_net_profit_usdt": 200,
+    "max_drawdown_pct": 0.05
+  }
+}
